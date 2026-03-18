@@ -1,62 +1,81 @@
 import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-from openai import OpenAI
-from openpyxl import load_workbook
+import json
+import re
 from datetime import datetime
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import telebot
+import gspread
+from google.oauth2.service_account import Credentials
 
-FILE_NAME = "finance.xlsx"
+# ================== TELEGRAM SETUP ==================
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-def init_excel():
+# ================== GOOGLE SHEETS SETUP ==================
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
+creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+
+client_sheets = gspread.authorize(creds)
+sheet = client_sheets.open("Finance Tracker").sheet1
+
+# ================== HELPER FUNCTION ==================
+def parse_message(text):
+    text = text.lower()
+
+    if "spent" in text:
+        t = "Expense"
+    elif "earned" in text or "income" in text:
+        t = "Income"
+    else:
+        return None
+
+    # get number
+    amount_match = re.search(r"\d+", text)
+    if not amount_match:
+        return None
+    amount = int(amount_match.group())
+
+    # simple category detection
+    if "food" in text:
+        category = "Food"
+    elif "transport" in text:
+        category = "Transport"
+    elif "game" in text:
+        category = "Gaming"
+    else:
+        category = "Other"
+
+    note = text
+
+    return t, amount, category, note
+
+# ================== BOT HANDLER ==================
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    result = parse_message(message.text)
+
+    if not result:
+        bot.reply_to(message, "❌ Format salah. Coba: 'Spent 20k on food'")
+        return
+
+    t, amount, category, note = result
+
     try:
-        load_workbook(FILE_NAME)
-    except:
-        from openpyxl import Workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.append(["Date", "Type", "Amount", "Category", "Note"])
-        wb.save(FILE_NAME)
-
-init_excel()
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "system", "content": "Extract finance data: type (Income/Expense), amount (number), category, note. Respond in format: type,amount,category,note"},
-            {"role": "user", "content": text}
-        ]
-    )
-
-    result = response.choices[0].message.content
-
-    try:
-        t, amount, category, note = result.split(",")
-
-        wb = load_workbook(FILE_NAME)
-        ws = wb.active
-
-        ws.append([
+        sheet.append_row([
             datetime.now().strftime("%Y-%m-%d"),
             t,
-            int(amount),
+            amount,
             category,
             note
         ])
 
-        wb.save(FILE_NAME)
+        bot.reply_to(message, f"✅ Tersimpan: {t} Rp{amount} ({category})")
 
-        await update.message.reply_text(f"Saved ✅ {t} {amount} {category}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
 
-    except:
-        await update.message.reply_text("Error 😅 Try: Spent 50k on food")
-
-app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-app.run_polling()
+# ================== START BOT ==================
+print("Bot is running...")
+bot.infinity_polling()
