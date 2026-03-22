@@ -24,6 +24,16 @@ creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 client_sheets = gspread.authorize(creds)
 sheet = client_sheets.open_by_key("1Jgrc4lmYveqNt5ydVT5xGhyAAyrQyY-yWls5xAEscoM").sheet1
 
+# ================= NUMBER WORDS =================
+words_to_numbers = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50
+}
+
 # ================= FALLBACK PARSER =================
 def fallback_parse(text):
     text_lower = text.lower()
@@ -36,16 +46,23 @@ def fallback_parse(text):
     else:
         t = "Expense"
 
-    # amount
+    # detect number
     number = 0
-    match = re.search(r"\d+", text_lower)
 
+    # try digits
+    match = re.search(r"\d+", text_lower)
     if match:
         number = int(match.group())
+    else:
+        # try word numbers
+        for word, value in words_to_numbers.items():
+            if word in text_lower:
+                number = value
+                break
 
-        if "thousand" in text_lower:
-            number *= 1000
-        if "k" in text_lower:
+    # multiplier (SAFE)
+    if number < 1000:
+        if "thousand" in text_lower or "k" in text_lower:
             number *= 1000
 
     # category
@@ -78,12 +95,16 @@ def parse_with_ai(text):
 
         data = json.loads(response.choices[0].message.content)
 
-        return (
-            data.get("type"),
-            int(data.get("amount")),
-            data.get("category"),
-            data.get("note")
-        )
+        t = data.get("type")
+        amount = int(data.get("amount"))
+        category = data.get("category")
+        note = data.get("note")
+
+        # safety: if AI gives weird number, fallback
+        if amount <= 0:
+            return fallback_parse(text)
+
+        return t, amount, category, note
 
     except Exception as e:
         print("AI FAILED:", e)
@@ -92,7 +113,7 @@ def parse_with_ai(text):
 # ================= BOT =================
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "🤖 Finance bot ready! Send anything like: 'bought snacks 15k'")
+    bot.reply_to(message, "🤖 Finance bot ready!")
 
 @bot.message_handler(func=lambda message: True)
 def handle(message):
