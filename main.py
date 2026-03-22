@@ -28,21 +28,11 @@ def parse_with_ai(text):
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
+            response_format={"type": "json_object"},
             messages=[
                 {
                     "role": "system",
-                    "content": """You are a finance assistant.
-
-Extract:
-- type (Income or Expense)
-- amount (number only, convert words like thousand = 1000)
-- category (short word like Food, Transport, etc)
-- note (short description)
-
-Even if there are typos, guess the meaning.
-
-Reply STRICTLY in JSON:
-{"type":"Expense","amount":15000,"category":"Food","note":"bought snacks"}"""
+                    "content": "Extract finance data as JSON with keys: type, amount, category, note. Type must be Income or Expense. Convert words like thousand to numbers."
                 },
                 {
                     "role": "user",
@@ -51,15 +41,13 @@ Reply STRICTLY in JSON:
             ]
         )
 
-        result = response.choices[0].message.content.strip()
-
-        data = json.loads(result)
+        data = json.loads(response.choices[0].message.content)
 
         return (
-            data["type"],
-            int(data["amount"]),
-            data["category"],
-            data["note"]
+            data.get("type"),
+            int(data.get("amount")),
+            data.get("category"),
+            data.get("note")
         )
 
     except Exception as e:
