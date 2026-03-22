@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from datetime import datetime
 
 import telebot
@@ -23,6 +24,40 @@ creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 client_sheets = gspread.authorize(creds)
 sheet = client_sheets.open_by_key("1Jgrc4lmYveqNt5ydVT5xGhyAAyrQyY-yWls5xAEscoM").sheet1
 
+# ================= FALLBACK PARSER =================
+def fallback_parse(text):
+    text_lower = text.lower()
+
+    # type
+    if any(w in text_lower for w in ["bought", "spent", "paid"]):
+        t = "Expense"
+    elif any(w in text_lower for w in ["got", "earned", "received"]):
+        t = "Income"
+    else:
+        t = "Expense"
+
+    # amount
+    number = 0
+    match = re.search(r"\d+", text_lower)
+
+    if match:
+        number = int(match.group())
+
+        if "thousand" in text_lower:
+            number *= 1000
+        if "k" in text_lower:
+            number *= 1000
+
+    # category
+    if "food" in text_lower or "snack" in text_lower:
+        category = "Food"
+    elif "transport" in text_lower:
+        category = "Transport"
+    else:
+        category = "Other"
+
+    return t, number, category, text
+
 # ================= AI PARSER =================
 def parse_with_ai(text):
     try:
@@ -32,7 +67,7 @@ def parse_with_ai(text):
             messages=[
                 {
                     "role": "system",
-                    "content": "Extract finance data as JSON with keys: type, amount, category, note. Type must be Income or Expense. Convert words like thousand to numbers."
+                    "content": "Extract finance data as JSON with keys: type, amount, category, note."
                 },
                 {
                     "role": "user",
@@ -51,23 +86,17 @@ def parse_with_ai(text):
         )
 
     except Exception as e:
-        print("AI ERROR:", e)
-        return None
+        print("AI FAILED:", e)
+        return fallback_parse(text)
 
 # ================= BOT =================
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "🤖 AI Finance bot ready!")
+    bot.reply_to(message, "🤖 Finance bot ready! Send anything like: 'bought snacks 15k'")
 
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    result = parse_with_ai(message.text)
-
-    if not result:
-        bot.reply_to(message, "❌ Couldn't understand")
-        return
-
-    t, amount, category, note = result
+    t, amount, category, note = parse_with_ai(message.text)
 
     try:
         sheet.append_row([
