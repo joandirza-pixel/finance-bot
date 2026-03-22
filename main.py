@@ -34,52 +34,64 @@ words_to_numbers = {
     "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50
 }
 
-# ================= DATE PARSER =================
+# ================= DATE =================
 def extract_date(text):
     text_lower = text.lower()
-
-    # find patterns like "13 march 2026"
     match = re.search(r"(\d{1,2} [a-zA-Z]+ \d{4})", text_lower)
 
     if match:
         date_str = match.group(1)
-
         for fmt in ["%d %B %Y", "%d %b %Y"]:
             try:
                 return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
             except:
                 pass
 
-    # fallback = today
     return datetime.now().strftime("%Y-%m-%d")
 
-# ================= FALLBACK PARSER =================
+# ================= TIME =================
+def extract_time(text):
+    text_lower = text.lower()
+
+    match = re.search(r"(\d{1,2}:\d{2})\s*(am|pm)", text_lower)
+
+    if match:
+        time_str = match.group(1)
+        ampm = match.group(2)
+
+        try:
+            t = datetime.strptime(f"{time_str} {ampm}", "%I:%M %p")
+            return t.strftime("%H:%M")
+        except:
+            pass
+
+    return "00:00"
+
+# ================= FALLBACK =================
 def fallback_parse(text):
     text_lower = text.lower()
 
     # type
     if any(w in text_lower for w in ["bought", "spent", "paid"]):
         t = "Expense"
-    elif any(w in text_lower for w in ["got", "earned", "received"]):
+    elif any(w in text_lower for w in ["got", "earned", "received", "income"]):
         t = "Income"
     else:
         t = "Expense"
 
     # number
     number = 0
-
-    # digits
     match = re.search(r"\d+", text_lower)
+
     if match:
         number = int(match.group())
     else:
-        # words
         for word, value in words_to_numbers.items():
             if word in text_lower:
                 number = value
                 break
 
-    # multipliers (SAFE)
+    # multiplier (SAFE)
     if number < 1000:
         if "thousand" in text_lower or "k" in text_lower:
             number *= 1000
@@ -98,7 +110,7 @@ def fallback_parse(text):
 
     return t, number, category, text
 
-# ================= AI PARSER =================
+# ================= AI =================
 def parse_with_ai(text):
     try:
         response = client.chat.completions.create(
@@ -107,7 +119,7 @@ def parse_with_ai(text):
             messages=[
                 {
                     "role": "system",
-                    "content": "Extract finance data as JSON with keys: type, amount, category, note, date (YYYY-MM-DD if possible)."
+                    "content": "Extract finance data as JSON with keys: type, amount, category, note."
                 },
                 {
                     "role": "user",
@@ -122,24 +134,14 @@ def parse_with_ai(text):
         amount = int(data.get("amount"))
         category = data.get("category")
         note = data.get("note")
-        date = data.get("date")
 
-        # fallback date if missing
-        if not date:
-            date = extract_date(text)
-
-        # safety
         if amount <= 0:
-            t, amount, category, note = fallback_parse(text)
-            date = extract_date(text)
+            return fallback_parse(text)
 
-        return t, amount, category, note, date
+        return t, amount, category, note
 
-    except Exception as e:
-        print("AI FAILED:", e)
-        t, amount, category, note = fallback_parse(text)
-        date = extract_date(text)
-        return t, amount, category, note, date
+    except:
+        return fallback_parse(text)
 
 # ================= BOT =================
 @bot.message_handler(commands=['start'])
@@ -148,18 +150,22 @@ def start(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    t, amount, category, note, date = parse_with_ai(message.text)
+    t, amount, category, note = parse_with_ai(message.text)
+
+    date = extract_date(message.text)
+    time = extract_time(message.text)
 
     try:
         sheet.append_row([
             date,
+            time,
             t,
             amount,
             category,
             note
         ])
 
-        bot.reply_to(message, f"✅ Saved: {t} Rp{amount} ({category}) on {date}")
+        bot.reply_to(message, f"✅ Saved: {t} Rp{amount} on {date} {time}")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
