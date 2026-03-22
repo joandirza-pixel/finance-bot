@@ -21,7 +21,6 @@ creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
 creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
 client_sheets = gspread.authorize(creds)
-
 sheet = client_sheets.open_by_key("1Jgrc4lmYveqNt5ydVT5xGhyAAyrQyY-yWls5xAEscoM").sheet1
 
 # ================= AI PARSER =================
@@ -32,7 +31,18 @@ def parse_with_ai(text):
             messages=[
                 {
                     "role": "system",
-                    "content": "Extract finance data. Reply ONLY like: type,amount,category,note"
+                    "content": """You are a finance assistant.
+
+Extract:
+- type (Income or Expense)
+- amount (number only, convert words like thousand = 1000)
+- category (short word like Food, Transport, etc)
+- note (short description)
+
+Even if there are typos, guess the meaning.
+
+Reply STRICTLY in JSON:
+{"type":"Expense","amount":15000,"category":"Food","note":"bought snacks"}"""
                 },
                 {
                     "role": "user",
@@ -42,9 +52,15 @@ def parse_with_ai(text):
         )
 
         result = response.choices[0].message.content.strip()
-        t, amount, category, note = result.split(",")
 
-        return t, int(amount), category, note
+        data = json.loads(result)
+
+        return (
+            data["type"],
+            int(data["amount"]),
+            data["category"],
+            data["note"]
+        )
 
     except Exception as e:
         print("AI ERROR:", e)
