@@ -17,7 +17,7 @@ creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
 creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
 client_sheets = gspread.authorize(creds)
-sheet = client_sheets.open("Finance Tracker").sheet1
+sheet = client_sheets.open("1Jgrc4lmYveqNt5ydVT5xGhyAAyrQyY-yWls5xAEscoM").sheet1
 
 # ================= BOT =================
 @bot.message_handler(commands=['start'])
