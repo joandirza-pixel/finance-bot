@@ -34,6 +34,20 @@ words_to_numbers = {
     "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50
 }
 
+# ================= DATE PARSER =================
+def extract_date(text):
+    text_lower = text.lower()
+
+    # try full date
+    for fmt in ["%d %B %Y", "%d %b %Y"]:
+        try:
+            return datetime.strptime(text_lower, fmt).strftime("%Y-%m-%d")
+        except:
+            pass
+
+    # fallback = today
+    return datetime.now().strftime("%Y-%m-%d")
+
 # ================= FALLBACK PARSER =================
 def fallback_parse(text):
     text_lower = text.lower()
@@ -46,30 +60,34 @@ def fallback_parse(text):
     else:
         t = "Expense"
 
-    # detect number
+    # number
     number = 0
 
-    # try digits
+    # digits
     match = re.search(r"\d+", text_lower)
     if match:
         number = int(match.group())
     else:
-        # try word numbers
+        # words
         for word, value in words_to_numbers.items():
             if word in text_lower:
                 number = value
                 break
 
-    # multiplier (SAFE)
+    # multipliers (SAFE)
     if number < 1000:
         if "thousand" in text_lower or "k" in text_lower:
             number *= 1000
+        elif "million" in text_lower or "jt" in text_lower:
+            number *= 1000000
 
     # category
     if "food" in text_lower or "snack" in text_lower:
         category = "Food"
     elif "transport" in text_lower:
         category = "Transport"
+    elif t == "Income":
+        category = "Income"
     else:
         category = "Other"
 
@@ -84,7 +102,7 @@ def parse_with_ai(text):
             messages=[
                 {
                     "role": "system",
-                    "content": "Extract finance data as JSON with keys: type, amount, category, note."
+                    "content": "Extract finance data as JSON with keys: type, amount, category, note, date (YYYY-MM-DD if possible)."
                 },
                 {
                     "role": "user",
@@ -99,16 +117,24 @@ def parse_with_ai(text):
         amount = int(data.get("amount"))
         category = data.get("category")
         note = data.get("note")
+        date = data.get("date")
 
-        # safety: if AI gives weird number, fallback
+        # fallback date if missing
+        if not date:
+            date = extract_date(text)
+
+        # safety
         if amount <= 0:
-            return fallback_parse(text)
+            t, amount, category, note = fallback_parse(text)
+            date = extract_date(text)
 
-        return t, amount, category, note
+        return t, amount, category, note, date
 
     except Exception as e:
         print("AI FAILED:", e)
-        return fallback_parse(text)
+        t, amount, category, note = fallback_parse(text)
+        date = extract_date(text)
+        return t, amount, category, note, date
 
 # ================= BOT =================
 @bot.message_handler(commands=['start'])
@@ -117,18 +143,18 @@ def start(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    t, amount, category, note = parse_with_ai(message.text)
+    t, amount, category, note, date = parse_with_ai(message.text)
 
     try:
         sheet.append_row([
-            datetime.now().strftime("%Y-%m-%d"),
+            date,
             t,
             amount,
             category,
             note
         ])
 
-        bot.reply_to(message, f"✅ Saved: {t} Rp{amount} ({category})")
+        bot.reply_to(message, f"✅ Saved: {t} Rp{amount} ({category}) on {date}")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
