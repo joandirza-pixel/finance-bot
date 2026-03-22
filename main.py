@@ -38,12 +38,17 @@ words_to_numbers = {
 def extract_date(text):
     text_lower = text.lower()
 
-    # try full date
-    for fmt in ["%d %B %Y", "%d %b %Y"]:
-        try:
-            return datetime.strptime(text_lower, fmt).strftime("%Y-%m-%d")
-        except:
-            pass
+    # find patterns like "13 march 2026"
+    match = re.search(r"(\d{1,2} [a-zA-Z]+ \d{4})", text_lower)
+
+    if match:
+        date_str = match.group(1)
+
+        for fmt in ["%d %B %Y", "%d %b %Y"]:
+            try:
+                return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+            except:
+                pass
 
     # fallback = today
     return datetime.now().strftime("%Y-%m-%d")
