@@ -2,3 +2,4 @@ pyTelegramBotAPI
 gspread
 google-auth
 openai
+matplotlib
