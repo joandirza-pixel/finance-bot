@@ -24,51 +24,74 @@ creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 client_sheets = gspread.authorize(creds)
 sheet = client_sheets.open_by_key("1Jgrc4lmYveqNt5ydVT5xGhyAAyrQyY-yWls5xAEscoM").sheet1
 
-# ================= NUMBER WORDS =================
-words_to_numbers = {
-    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
-    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
-    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
-    "fourteen": 14, "fifteen": 15, "sixteen": 16,
-    "seventeen": 17, "eighteen": 18, "nineteen": 19,
-    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50
-}
+# ================= HELPERS =================
+def get_all_data():
+    return sheet.get_all_values()[1:]  # skip header
 
-# ================= DATE =================
-def extract_date(text):
-    text_lower = text.lower()
-    match = re.search(r"(\d{1,2} [a-zA-Z]+ \d{4})", text_lower)
+def calculate_balance():
+    data = get_all_data()
+    income = 0
+    expense = 0
 
-    if match:
-        date_str = match.group(1)
-        for fmt in ["%d %B %Y", "%d %b %Y"]:
-            try:
-                return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
-            except:
-                pass
-
-    return datetime.now().strftime("%Y-%m-%d")
-
-# ================= TIME =================
-def extract_time(text):
-    text_lower = text.lower()
-
-    match = re.search(r"(\d{1,2}:\d{2})\s*(am|pm)", text_lower)
-
-    if match:
-        time_str = match.group(1)
-        ampm = match.group(2)
-
+    for row in data:
         try:
-            t = datetime.strptime(f"{time_str} {ampm}", "%I:%M %p")
-            return t.strftime("%H:%M")
+            if row[2] == "Income":
+                income += int(row[3])
+            elif row[2] == "Expense":
+                expense += int(row[3])
         except:
             pass
 
-    return "00:00"
+    return income, expense, income - expense
 
-# ================= FALLBACK =================
-def fallback_parse(text):
+# ================= COMMANDS =================
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, "🤖 Finance bot ready!")
+
+@bot.message_handler(commands=['balance'])
+def balance(message):
+    income, expense, total = calculate_balance()
+    bot.reply_to(message, f"💰 Balance: Rp{total}\n📈 Income: Rp{income}\n📉 Expense: Rp{expense}")
+
+@bot.message_handler(commands=['today'])
+def today(message):
+    data = get_all_data()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    total = 0
+    for row in data:
+        try:
+            if row[0] == today_str and row[2] == "Expense":
+                total += int(row[3])
+        except:
+            pass
+
+    bot.reply_to(message, f"📅 Today's spending: Rp{total}")
+
+@bot.message_handler(commands=['summary'])
+def summary(message):
+    data = get_all_data()
+
+    by_category = {}
+
+    for row in data:
+        try:
+            if row[2] == "Expense":
+                cat = row[4]
+                amt = int(row[3])
+                by_category[cat] = by_category.get(cat, 0) + amt
+        except:
+            pass
+
+    text = "📊 Spending by category:\n"
+    for cat, amt in by_category.items():
+        text += f"- {cat}: Rp{amt}\n"
+
+    bot.reply_to(message, text)
+
+# ================= SIMPLE PARSER =================
+def parse(text):
     text_lower = text.lower()
 
     # type
@@ -79,24 +102,17 @@ def fallback_parse(text):
     else:
         t = "Expense"
 
-    # number
+    # amount
     number = 0
     match = re.search(r"\d+", text_lower)
-
     if match:
         number = int(match.group())
-    else:
-        for word, value in words_to_numbers.items():
-            if word in text_lower:
-                number = value
-                break
 
-    # multiplier (SAFE)
-    if number < 1000:
-        if "thousand" in text_lower or "k" in text_lower:
-            number *= 1000
-        elif "million" in text_lower or "jt" in text_lower:
-            number *= 1000000
+        if number < 1000:
+            if "thousand" in text_lower or "k" in text_lower:
+                number *= 1000
+            elif "million" in text_lower:
+                number *= 1000000
 
     # category
     if "food" in text_lower or "snack" in text_lower:
@@ -110,62 +126,38 @@ def fallback_parse(text):
 
     return t, number, category, text
 
-# ================= AI =================
-def parse_with_ai(text):
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Extract finance data as JSON with keys: type, amount, category, note."
-                },
-                {
-                    "role": "user",
-                    "content": text
-                }
-            ]
-        )
+# ================= DATE + TIME =================
+def extract_date(text):
+    match = re.search(r"(\d{1,2} [a-zA-Z]+ \d{4})", text.lower())
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%d %B %Y").strftime("%Y-%m-%d")
+        except:
+            pass
+    return datetime.now().strftime("%Y-%m-%d")
 
-        data = json.loads(response.choices[0].message.content)
+def extract_time(text):
+    match = re.search(r"(\d{1,2}:\d{2})\s*(am|pm)", text.lower())
+    if match:
+        t = datetime.strptime(f"{match.group(1)} {match.group(2)}", "%I:%M %p")
+        return t.strftime("%H:%M")
+    return "00:00"
 
-        t = data.get("type")
-        amount = int(data.get("amount"))
-        category = data.get("category")
-        note = data.get("note")
-
-        if amount <= 0:
-            return fallback_parse(text)
-
-        return t, amount, category, note
-
-    except:
-        return fallback_parse(text)
-
-# ================= BOT =================
-@bot.message_handler(commands=['start'])
-def start(message):
-    bot.reply_to(message, "🤖 Finance bot ready!")
-
+# ================= MESSAGE HANDLER =================
 @bot.message_handler(func=lambda message: True)
 def handle(message):
-    t, amount, category, note = parse_with_ai(message.text)
-
+    t, amount, category, note = parse(message.text)
     date = extract_date(message.text)
     time = extract_time(message.text)
 
     try:
-        sheet.append_row([
-            date,
-            time,
-            t,
-            amount,
-            category,
-            note
-        ])
+        sheet.append_row([date, time, t, amount, category, note])
 
-        bot.reply_to(message, f"✅ Saved: {t} Rp{amount} on {date} {time}")
+        # smarter reply
+        if t == "Expense":
+            bot.reply_to(message, f"💸 Logged expense Rp{amount}. Careful bro 😏")
+        else:
+            bot.reply_to(message, f"💰 Nice! Income Rp{amount} added!")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
